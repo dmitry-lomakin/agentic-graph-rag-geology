@@ -98,7 +98,7 @@ def make_embedding_model(settings: Settings | None = None):
     from sentence_transformers import SentenceTransformer
 
     cfg = settings or get_settings()
-    device = cfg.embedding.device or None  # None = auto-detect
+    device = cfg.embedding.device or "cpu"
     _embedding_model = SentenceTransformer(cfg.embedding.model_name, device=device)
     return _embedding_model
 
