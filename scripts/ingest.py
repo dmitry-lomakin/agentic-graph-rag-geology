@@ -178,7 +178,7 @@ def main() -> None:
             for name in sorted(names):
                 full = os.path.join(root, name)
                 if not name.startswith("."):
-                files.append(full)
+                    files.append(full)
 
     if not files:
         logger.error("No files found at: %s", target)
