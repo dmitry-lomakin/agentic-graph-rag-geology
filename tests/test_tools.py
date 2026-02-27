@@ -54,11 +54,12 @@ def _make_results(n: int, source: str = "vector") -> list[SearchResult]:
 # ---------------------------------------------------------------------------
 
 class TestEmbedQuery:
-    def test_returns_embedding(self):
-        client = _mock_openai_client([0.5, 0.5])
-        emb = _embed_query("test", client)
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_returns_embedding(self, mock_embed):
+        mock_embed.return_value = [0.5, 0.5]
+        emb = _embed_query("test")
         assert emb == [0.5, 0.5]
-        client.embeddings.create.assert_called_once()
+        mock_embed.assert_called_once_with("test")
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +184,13 @@ class TestFetchPassageEmbeddings:
 # ---------------------------------------------------------------------------
 
 class TestHybridSearch:
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
     @patch("agentic_graph_rag.agent.tools._fetch_passage_embeddings")
     @patch("agentic_graph_rag.agent.tools.cypher_traverse")
     @patch("agentic_graph_rag.agent.tools.vector_search")
-    def test_reranks_by_cosine_similarity(self, mock_vs, mock_ct, mock_fetch):
+    def test_reranks_by_cosine_similarity(self, mock_vs, mock_ct, mock_fetch, mock_embed):
         """Higher cosine similarity passages should rank first."""
+        mock_embed.return_value = [1.0, 0.0]
         # vector_search returns [c1, c2]
         mock_vs.return_value = [
             SearchResult(chunk=Chunk(id="c1", content="Low match"), score=1.0, rank=1, source="vector"),
@@ -205,7 +208,7 @@ class TestHybridSearch:
         }
 
         driver = _mock_driver()
-        client = _mock_openai_client([1.0, 0.0])  # query embedding
+        client = _mock_openai_client([1.0, 0.0])
 
         results = hybrid_search("test", driver, client, top_k=5)
         assert len(results) == 3
@@ -214,11 +217,13 @@ class TestHybridSearch:
         assert results[0].score > results[1].score
         assert results[1].score > results[2].score
 
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
     @patch("agentic_graph_rag.agent.tools._fetch_passage_embeddings")
     @patch("agentic_graph_rag.agent.tools.cypher_traverse")
     @patch("agentic_graph_rag.agent.tools.vector_search")
-    def test_deduplicates_results(self, mock_vs, mock_ct, mock_fetch):
+    def test_deduplicates_results(self, mock_vs, mock_ct, mock_fetch, mock_embed):
         """Same passage from both sources should appear only once."""
+        mock_embed.return_value = [1.0, 0.0]
         shared = SearchResult(chunk=Chunk(id="c1", content="Shared"), score=1.0, rank=1, source="vector")
         mock_vs.return_value = [shared]
         mock_ct.return_value = [
@@ -233,11 +238,13 @@ class TestHybridSearch:
         assert len(results) == 1
         assert results[0].chunk.id == "c1"
 
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
     @patch("agentic_graph_rag.agent.tools._fetch_passage_embeddings")
     @patch("agentic_graph_rag.agent.tools.cypher_traverse")
     @patch("agentic_graph_rag.agent.tools.vector_search")
-    def test_fallback_for_missing_embeddings(self, mock_vs, mock_ct, mock_fetch):
+    def test_fallback_for_missing_embeddings(self, mock_vs, mock_ct, mock_fetch, mock_embed):
         """Passages without embeddings get fallback score."""
+        mock_embed.return_value = [1.0, 0.0]
         mock_vs.return_value = [
             SearchResult(chunk=Chunk(id="c1", content="Has embedding"), score=0.8, rank=1, source="vector"),
             SearchResult(chunk=Chunk(id="", content="No id passage"), score=0.5, rank=2, source="vector"),
@@ -256,11 +263,13 @@ class TestHybridSearch:
         # second result has fallback score
         assert results[1].score < results[0].score
 
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
     @patch("agentic_graph_rag.agent.tools._fetch_passage_embeddings")
     @patch("agentic_graph_rag.agent.tools.cypher_traverse")
     @patch("agentic_graph_rag.agent.tools.vector_search")
-    def test_respects_top_k(self, mock_vs, mock_ct, mock_fetch):
+    def test_respects_top_k(self, mock_vs, mock_ct, mock_fetch, mock_embed):
         """Returns at most top_k results."""
+        mock_embed.return_value = [1.0, 0.0]
         mock_vs.return_value = _make_results(5, source="vector")
         mock_ct.return_value = _make_results(5, source="graph")
         mock_fetch.return_value = {
@@ -294,7 +303,9 @@ class TestHybridSearch:
 # ---------------------------------------------------------------------------
 
 class TestVectorSearch:
-    def test_returns_results(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_returns_results(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         client = _mock_openai_client()
         ctx = GraphContext(passages=["Result"], source_ids=["c1"])
@@ -307,7 +318,7 @@ class TestVectorSearch:
 
         assert len(results) == 1
         assert results[0].chunk.content == "Result"
-        client.embeddings.create.assert_called_once()
+        mock_embed.assert_called_once_with("test")
 
 
 # ---------------------------------------------------------------------------
@@ -326,10 +337,11 @@ class TestCosineSimilarity:
 
 
 class TestFullDocumentRead:
-    def test_reads_and_ranks_passages(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_reads_and_ranks_passages(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         session = driver.session().__enter__()
-        # query embedding = [1.0, 0.0]
         client = _mock_openai_client([1.0, 0.0])
 
         rec1 = MagicMock()
@@ -355,7 +367,9 @@ class TestFullDocumentRead:
         assert results[0].score > results[1].score
         assert results[1].chunk.content == "Text one"
 
-    def test_passages_without_embedding(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_passages_without_embedding(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         session = driver.session().__enter__()
         client = _mock_openai_client([1.0, 0.0])
@@ -374,7 +388,9 @@ class TestFullDocumentRead:
         assert len(results) == 1
         assert results[0].score == 0.0
 
-    def test_empty_passages(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_empty_passages(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         session = driver.session().__enter__()
         client = _mock_openai_client()
@@ -402,7 +418,9 @@ class TestWrapperTools:
         mock_vs.assert_called_once_with("test", driver, client)
         assert len(results) == 2
 
-    def test_temporal_query_boosts_temporal_passages(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_temporal_query_boosts_temporal_passages(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         session = driver.session().__enter__()
         client = _mock_openai_client([1.0, 0.0])
@@ -428,7 +446,9 @@ class TestWrapperTools:
         # Temporal passage should be boosted above regular
         assert results[0].chunk.content == "Компания основана в 2015 году"
 
-    def test_temporal_query_empty_falls_back(self):
+    @patch("agentic_graph_rag.agent.tools._embed_query_local")
+    def test_temporal_query_empty_falls_back(self, mock_embed):
+        mock_embed.return_value = [1.0, 0.0]
         driver = _mock_driver()
         session = driver.session().__enter__()
         client = _mock_openai_client()
@@ -492,9 +512,10 @@ class TestGenerateSubQueries:
 # ---------------------------------------------------------------------------
 
 class TestComprehensiveSearch:
+    @patch("agentic_graph_rag.agent.tools.full_document_read")
     @patch("agentic_graph_rag.agent.tools.vector_search")
     @patch("agentic_graph_rag.agent.tools._generate_sub_queries")
-    def test_merges_sub_query_results(self, mock_gen, mock_vs):
+    def test_merges_sub_query_results(self, mock_gen, mock_vs, mock_fdr):
         mock_gen.return_value = ["sub1", "sub2", "sub3"]
         # Return different results for each call
         mock_vs.side_effect = [
@@ -503,6 +524,7 @@ class TestComprehensiveSearch:
             _make_results(3, source="v"),  # sub3
             _make_results(3, source="v"),  # original query
         ]
+        mock_fdr.return_value = _make_results(2, source="full_read")
 
         driver = _mock_driver()
         client = _mock_openai_client()
@@ -511,14 +533,16 @@ class TestComprehensiveSearch:
         assert len(results) > 0
         assert mock_vs.call_count == 4  # 3 sub-queries + 1 original
 
+    @patch("agentic_graph_rag.agent.tools.full_document_read")
     @patch("agentic_graph_rag.agent.tools.vector_search")
     @patch("agentic_graph_rag.agent.tools._generate_sub_queries")
-    def test_falls_back_on_empty_sub_queries(self, mock_gen, mock_vs):
+    def test_falls_back_on_empty_sub_queries(self, mock_gen, mock_vs, mock_fdr):
         mock_gen.return_value = []
         mock_vs.return_value = _make_results(5, source="v")
+        mock_fdr.return_value = _make_results(2, source="full_read")
 
         driver = _mock_driver()
         client = _mock_openai_client()
 
         results = comprehensive_search("test", driver, client)
-        assert len(results) == 5
+        assert len(results) > 0

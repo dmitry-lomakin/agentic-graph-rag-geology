@@ -52,6 +52,13 @@ class TestVectorStoreSearch:
             "id": "c1",
             "content": "test content",
             "context": "",
+            "source_file": "",
+            "source_type": "",
+            "source_url": None,
+            "software_product": None,
+            "geology_subdomain": "general",
+            "section_path": "",
+            "language": "",
             "score": 0.95,
         }
         mock_result = MagicMock()

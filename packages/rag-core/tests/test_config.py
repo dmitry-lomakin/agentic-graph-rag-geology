@@ -5,6 +5,7 @@
 import pytest
 from rag_core.config import (
     AgentSettings,
+    EmbeddingSettings,
     IndexingSettings,
     Neo4jSettings,
     OpenAISettings,
@@ -31,11 +32,19 @@ class TestNeo4jSettings:
 class TestOpenAISettings:
     def test_defaults(self):
         s = OpenAISettings()
-        assert s.embedding_model == "text-embedding-3-small"
-        assert s.embedding_dimensions == 1536
         assert s.llm_model == "gpt-4o"
         assert s.llm_model_mini == "gpt-4o-mini"
         assert s.llm_temperature == 0.0
+
+
+class TestEmbeddingSettings:
+    def test_defaults(self):
+        s = EmbeddingSettings()
+        assert s.model_name == "intfloat/multilingual-e5-large"
+        assert s.dimensions == 1024
+        assert s.prefix_passage == "passage: "
+        assert s.prefix_query == "query: "
+        assert s.batch_size == 32
 
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test-123")
@@ -46,8 +55,8 @@ class TestOpenAISettings:
 class TestIndexingSettings:
     def test_defaults(self):
         s = IndexingSettings()
-        assert s.chunk_size == 1000
-        assert s.chunk_overlap == 200
+        assert s.chunk_size == 768
+        assert s.chunk_overlap == 100
         assert s.skeleton_beta == 0.25
         assert s.knn_k == 10
         assert s.pagerank_damping == 0.85
