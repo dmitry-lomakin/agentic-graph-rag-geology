@@ -9,6 +9,7 @@ Options:
     --skip-skeleton     Skip skeleton indexing (no entity extraction, just vector store)
     --use-gpu           Enable GPU acceleration for Docling document parsing
     --force             Re-ingest files even if already processed
+    --timeout N         Per-file timeout in seconds (default: 300, 0=unlimited)
 
 Examples:
     python scripts/ingest.py data/sample_graph_rag.txt
@@ -22,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -40,6 +42,36 @@ logger = logging.getLogger("ingest")
 
 CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "manifests"
 CHECKPOINT_FILE = CHECKPOINT_DIR / "ingest_checkpoint.json"
+
+
+# ---------------------------------------------------------------------------
+# Timeout helper (Unix only — on Windows, falls back to no timeout)
+# ---------------------------------------------------------------------------
+
+class _TimeoutError(Exception):
+    pass
+
+
+class _file_timeout:
+    """Context manager that raises _TimeoutError after *seconds* on Unix."""
+
+    def __init__(self, seconds: int):
+        self.seconds = seconds
+        self._supported = hasattr(signal, "SIGALRM")
+
+    def __enter__(self):
+        if self._supported and self.seconds > 0:
+            signal.signal(signal.SIGALRM, self._handler)
+            signal.alarm(self.seconds)
+        return self
+
+    def __exit__(self, *args):
+        if self._supported and self.seconds > 0:
+            signal.alarm(0)
+
+    @staticmethod
+    def _handler(signum, frame):
+        raise _TimeoutError("File processing timed out")
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +256,7 @@ def main() -> None:
     parser.add_argument("--software-product", default="", help="Software product name (e.g. Micromine, Surpac)")
     parser.add_argument("--language", default="ru", help="Document language: ru|en")
     parser.add_argument("--force", action="store_true", help="Re-ingest files even if already processed")
+    parser.add_argument("--timeout", type=int, default=300, help="Timeout per file in seconds (default: 300, 0=no timeout)")
     args = parser.parse_args()
 
     target = os.path.abspath(args.path)
@@ -263,33 +296,39 @@ def main() -> None:
         logger.info("All files already ingested. Nothing to do.")
         return
 
-    logger.info("Ingesting %d file(s)...", len(files))
+    logger.info("Ingesting %d file(s) (timeout=%ds per file)...", len(files), args.timeout)
     succeeded = 0
     failed = 0
+    timed_out = 0
     total_chunks = 0
     for i, f in enumerate(files, 1):
-        logger.info("[%d/%d] %s", i, len(files), os.path.basename(f))
+        size_mb = os.path.getsize(f) / (1024 * 1024)
+        logger.info("[%d/%d] %s (%.1f MB)", i, len(files), os.path.basename(f), size_mb)
         try:
-            n_chunks = ingest_file(
-                f,
-                skip_enrichment=args.skip_enrichment,
-                skip_skeleton=args.skip_skeleton,
-                use_gpu=args.use_gpu,
-                geology=args.geology,
-                source_type=args.source_type,
-                software_product=args.software_product,
-                language=args.language,
-            )
+            with _file_timeout(args.timeout):
+                n_chunks = ingest_file(
+                    f,
+                    skip_enrichment=args.skip_enrichment,
+                    skip_skeleton=args.skip_skeleton,
+                    use_gpu=args.use_gpu,
+                    geology=args.geology,
+                    source_type=args.source_type,
+                    software_product=args.software_product,
+                    language=args.language,
+                )
             _mark_done(checkpoint, f, n_chunks)
             succeeded += 1
             total_chunks += n_chunks
+        except _TimeoutError:
+            logger.error("TIMEOUT %s after %ds — skipping (large scanned PDF?)", os.path.basename(f), args.timeout)
+            timed_out += 1
         except Exception as exc:
             logger.error("FAILED %s: %s", os.path.basename(f), exc)
             failed += 1
 
     logger.info(
-        "Done. %d succeeded (%d chunks), %d failed out of %d files.",
-        succeeded, total_chunks, failed, len(files),
+        "Done. %d succeeded (%d chunks), %d failed, %d timed out — out of %d files.",
+        succeeded, total_chunks, failed, timed_out, len(files),
     )
 
 

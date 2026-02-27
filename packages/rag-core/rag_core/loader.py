@@ -181,11 +181,17 @@ class DoclingLoader:
 
 # ── Convenience function (RAG 2.0 API) ──────────────────────────
 
+_cached_loader: DoclingLoader | None = None
+
+
 def load_file(file_path: str, use_gpu: bool = False) -> str:
     """Load document and return markdown text.
 
     Simple API for pipelines that only need the text.
+    Caches the DoclingLoader so models are loaded only once across files.
     """
-    loader = DoclingLoader(use_gpu=use_gpu)
-    result = loader.load(file_path)
+    global _cached_loader  # noqa: PLW0603
+    if _cached_loader is None or _cached_loader._use_gpu != use_gpu:
+        _cached_loader = DoclingLoader(use_gpu=use_gpu)
+    result = _cached_loader.load(file_path)
     return result.markdown
