@@ -220,7 +220,11 @@ def mount_mcp(app, service: PipelineService):
             Filter by source_type or software_product."""
             return tools["list_sources"](source_type, software_product)
 
-        mcp.mount(app, path="/mcp")
+        try:
+            mcp.mount(app, path="/mcp")
+        except TypeError:
+            # Newer fastmcp versions use different mount API
+            mcp.mount(app)
 
     except ImportError:
         import logging
