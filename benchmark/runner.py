@@ -53,15 +53,12 @@ def _keyword_overlap(answer: str, keywords: list[str]) -> float:
 
 
 def _embedding_similarity(text_a: str, text_b: str, openai_client: OpenAI) -> float:
-    """Cosine similarity between embeddings of two texts."""
-    cfg = get_settings()
+    """Cosine similarity between embeddings of two texts using local model."""
+    from rag_core.embedder import embed_texts
+
     try:
-        resp = openai_client.embeddings.create(
-            model=cfg.openai.embedding_model,
-            input=[text_a[:8000], text_b[:8000]],
-        )
-        vec_a = resp.data[0].embedding
-        vec_b = resp.data[1].embedding
+        vecs = embed_texts([text_a[:8000], text_b[:8000]])
+        vec_a, vec_b = vecs[0], vecs[1]
         dot = sum(a * b for a, b in zip(vec_a, vec_b))
         norm_a = sum(a * a for a in vec_a) ** 0.5
         norm_b = sum(b * b for b in vec_b) ** 0.5

@@ -35,8 +35,17 @@ def find_entry_points(
     driver: Driver,
     top_k: int | None = None,
     threshold: float | None = None,
+    filters: dict[str, str] | None = None,
 ) -> list[dict]:
     """Find nearest PhraseNodes via Neo4j vector index.
+
+    Args:
+        query_embedding: Query vector.
+        driver: Neo4j driver.
+        top_k: Number of results.
+        threshold: Minimum similarity score.
+        filters: Optional metadata filters applied to linked PassageNodes.
+                 Supported: software_product, geology_subdomain, language, source_type.
 
     Returns list of dicts with keys: id, name, entity_type, score.
     """
@@ -46,6 +55,23 @@ def find_entry_points(
     if threshold is None:
         threshold = cfg.retrieval.vector_threshold
 
+    # Build optional filter via PassageNode metadata
+    filter_clause = ""
+    params: dict = {"top_k": top_k, "embedding": query_embedding, "threshold": threshold}
+
+    if filters:
+        filter_parts = []
+        for field, value in filters.items():
+            if field in ("software_product", "geology_subdomain", "language", "source_type") and value:
+                param_name = f"f_{field}"
+                filter_parts.append(f"pa.{field} = ${param_name}")
+                params[param_name] = value
+        if filter_parts:
+            filter_clause = (
+                f"AND EXISTS {{ MATCH (node)-[:MENTIONED_IN]->(pa:{PASSAGE_LABEL}) "
+                f"WHERE {' AND '.join(filter_parts)} }}"
+            )
+
     with driver.session() as session:
         result = session.run(
             f"""
@@ -53,7 +79,7 @@ def find_entry_points(
                 '{PHRASE_INDEX_NAME}', $top_k, $embedding
             )
             YIELD node, score
-            WHERE score >= $threshold
+            WHERE score >= $threshold {filter_clause}
             RETURN node.id AS id,
                    node.name AS name,
                    node.entity_type AS entity_type,
@@ -61,9 +87,7 @@ def find_entry_points(
                    score
             ORDER BY score DESC
             """,
-            top_k=top_k,
-            embedding=query_embedding,
-            threshold=threshold,
+            **params,
         )
 
         entries = []
@@ -290,6 +314,7 @@ def search(
     top_k: int | None = None,
     max_hops: int | None = None,
     threshold: float | None = None,
+    filters: dict[str, str] | None = None,
 ) -> GraphContext:
     """Full VectorCypher retrieval pipeline.
 
@@ -297,10 +322,15 @@ def search(
     2. Traverse graph from entries
     3. Collect and assemble context
 
+    Args:
+        filters: Optional metadata filters (software_product, geology_subdomain, etc.)
+
     Returns GraphContext with triplets, passages, entities, source_ids.
     """
     # Step 1: Vector entry
-    entries = find_entry_points(query_embedding, driver, top_k=top_k, threshold=threshold)
+    entries = find_entry_points(
+        query_embedding, driver, top_k=top_k, threshold=threshold, filters=filters,
+    )
 
     if not entries:
         logger.warning("No entry points found for query")

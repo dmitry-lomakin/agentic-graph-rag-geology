@@ -109,12 +109,24 @@ def create_passage_nodes(
                 MERGE (p:{PASSAGE_LABEL} {{id: $id}})
                 SET p.text = $text,
                     p.chunk_id = $chunk_id,
-                    p.embedding = $embedding
+                    p.embedding = $embedding,
+                    p.source_file = $source_file,
+                    p.source_type = $source_type,
+                    p.software_product = $software_product,
+                    p.geology_subdomain = $geology_subdomain,
+                    p.section_path = $section_path,
+                    p.language = $language
                 """,
                 id=pid,
                 text=chunk.enriched_content,
                 chunk_id=chunk.id,
                 embedding=chunk.embedding,
+                source_file=chunk.source_file,
+                source_type=chunk.source_type,
+                software_product=chunk.software_product,
+                geology_subdomain=chunk.geology_subdomain,
+                section_path=chunk.section_path,
+                language=chunk.language,
             )
 
             passage_nodes.append(PassageNode(
@@ -322,45 +334,37 @@ def embed_phrase_nodes(
 ) -> int:
     """Add embeddings to PhraseNodes by embedding their name + description.
 
+    Uses local SentenceTransformer (multilingual-e5-large).
     Returns count of nodes updated.
     """
-    cfg = get_settings()
-    if openai_client is None:
-        from rag_core.config import make_openai_client
-        openai_client = make_openai_client(cfg)
-
     if not phrase_nodes:
         return 0
 
-    # Batch embed all phrase texts
-    texts = [
-        f"{pn.name}: {pn.entity_type}" for pn in phrase_nodes
-    ]
+    from rag_core.embedder import embed_texts
 
-    response = openai_client.embeddings.create(
-        model=cfg.openai.embedding_model,
-        input=texts,
-        dimensions=cfg.openai.embedding_dimensions,
-    )
+    texts = [f"{pn.name}: {pn.entity_type}" for pn in phrase_nodes]
+    embeddings = embed_texts(texts)
 
     with driver.session() as session:
         for i, pn in enumerate(phrase_nodes):
-            emb = response.data[i].embedding
             session.run(
                 f"""
                 MATCH (p:{PHRASE_LABEL} {{id: $id}})
                 SET p.embedding = $embedding
                 """,
                 id=pn.id,
-                embedding=emb,
+                embedding=embeddings[i],
             )
 
     logger.info("Added embeddings to %d PhraseNodes", len(phrase_nodes))
     return len(phrase_nodes)
 
 
+PASSAGE_FULLTEXT_INDEX = "passage_node_fulltext"
+
+
 def init_phrase_index(driver: Driver) -> None:
-    """Create vector index on PhraseNode embeddings if not exists."""
+    """Create vector index on PhraseNode embeddings and fulltext index on PassageNode text."""
     cfg = get_settings()
     with driver.session() as session:
         session.run(
@@ -375,6 +379,24 @@ def init_phrase_index(driver: Driver) -> None:
                 }}
             }}
             """,
-            dimensions=cfg.openai.embedding_dimensions,
+            dimensions=cfg.embedding.dimensions,
         )
-    logger.info("Phrase vector index '%s' initialized", PHRASE_INDEX_NAME)
+
+        # Fulltext index on PassageNode for BM25 hybrid search
+        session.run(
+            f"""
+            CREATE FULLTEXT INDEX {PASSAGE_FULLTEXT_INDEX} IF NOT EXISTS
+            FOR (n:{PASSAGE_LABEL})
+            ON EACH [n.text]
+            """
+        )
+
+        # Property indexes on PassageNode for metadata filtering
+        for field in ("software_product", "geology_subdomain", "language", "source_type"):
+            session.run(
+                f"CREATE INDEX idx_{PASSAGE_LABEL}_{field} IF NOT EXISTS "
+                f"FOR (n:{PASSAGE_LABEL}) ON (n.{field})"
+            )
+
+    logger.info("Phrase vector index '%s' + passage fulltext index '%s' initialized",
+                PHRASE_INDEX_NAME, PASSAGE_FULLTEXT_INDEX)

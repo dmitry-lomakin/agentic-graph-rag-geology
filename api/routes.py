@@ -42,6 +42,33 @@ class SearchRequest(BaseModel):
     tool: VALID_TOOLS = "vector_search"
 
 
+class GeologySearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=10000)
+    language: str = ""
+    software_product: str = ""
+    geology_subdomain: str = ""
+    source_type: str = ""
+
+
+class FeatureRequest(BaseModel):
+    feature_name: str = Field(..., min_length=1, max_length=1000)
+    software_product: str = "Micromine"
+
+
+class CompareRequest(BaseModel):
+    feature: str = Field(..., min_length=1, max_length=1000)
+    products: list[str] = Field(default_factory=lambda: ["Micromine", "Surpac", "ГЕОМИКС"])
+
+
+class StandardRequest(BaseModel):
+    standard_name: str = Field(..., min_length=1, max_length=1000)
+
+
+class ListSourcesRequest(BaseModel):
+    source_type: str = ""
+    software_product: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -85,3 +112,50 @@ def graph_stats():
 def metrics():
     from api.middleware import get_metrics
     return get_metrics().snapshot()
+
+
+# ---------------------------------------------------------------------------
+# Geology domain endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/geology/search")
+def geology_search(req: GeologySearchRequest):
+    svc = get_service()
+    results = svc.search_geology_docs(
+        req.query,
+        language=req.language,
+        software_product=req.software_product,
+        geology_subdomain=req.geology_subdomain,
+        source_type=req.source_type,
+    )
+    return [r.model_dump() for r in results]
+
+
+@router.post("/geology/feature")
+def geology_feature(req: FeatureRequest):
+    svc = get_service()
+    results = svc.get_software_feature(req.feature_name, req.software_product)
+    return [r.model_dump() for r in results]
+
+
+@router.post("/geology/compare")
+def geology_compare(req: CompareRequest):
+    svc = get_service()
+    result_map = svc.compare_implementations(req.feature, req.products)
+    return {
+        product: [r.model_dump() for r in results]
+        for product, results in result_map.items()
+    }
+
+
+@router.post("/geology/standard")
+def geology_standard(req: StandardRequest):
+    svc = get_service()
+    results = svc.get_standard(req.standard_name)
+    return [r.model_dump() for r in results]
+
+
+@router.get("/geology/sources")
+def geology_sources(source_type: str = "", software_product: str = ""):
+    svc = get_service()
+    return svc.list_sources(source_type, software_product)

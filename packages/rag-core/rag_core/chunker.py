@@ -232,3 +232,226 @@ def _create_chunk(content: str, section_title: str) -> Chunk:
         content=content,
         metadata={"section_title": section_title} if section_title else {},
     )
+
+
+# ── Geology-aware chunking ─────────────────────────────────────────
+
+_IMAGE_PATTERN = re.compile(r"!\[|(\[Image)")
+
+
+def _has_figures(text: str) -> bool:
+    """Detect figure references in chunk text."""
+    return bool(_IMAGE_PATTERN.search(text))
+
+
+def _fix_unclosed_code_blocks(text: str) -> str:
+    """Append closing ``` if code fences are unbalanced."""
+    count = text.count("```")
+    if count % 2 != 0:
+        text = text.rstrip() + "\n```"
+    return text
+
+
+def _is_table_block(text: str) -> bool:
+    """Check if text is predominantly a pipe-format markdown table."""
+    lines = [ln for ln in text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return False
+    pipe_lines = sum(1 for ln in lines if "|" in ln)
+    return (pipe_lines / len(lines)) > 0.6
+
+
+def _is_code_block(text: str) -> bool:
+    """Check if text is wrapped in code fences."""
+    stripped = text.strip()
+    return stripped.startswith("```") and stripped.endswith("```")
+
+
+def _filter_empty_sections(text: str) -> str:
+    """Remove empty sections (heading followed immediately by another heading)."""
+    lines = text.splitlines()
+    result = []
+    for i, line in enumerate(lines):
+        if line.startswith("#") and i + 1 < len(lines):
+            next_non_empty = None
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip():
+                    next_non_empty = lines[j]
+                    break
+            if next_non_empty and next_non_empty.startswith("#"):
+                continue
+        result.append(line)
+    return "\n".join(result)
+
+
+def _load_tokenizer():
+    """Try to load the multilingual-e5-large tokenizer.
+
+    Returns (tokenize_to_list, count_tokens) tuple, or None on failure.
+    """
+    try:
+        import warnings
+
+        from transformers import AutoTokenizer
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Token indices sequence length")
+            tok = AutoTokenizer.from_pretrained(
+                "intfloat/multilingual-e5-large", use_fast=True,
+            )
+        tok.model_max_length = 1_000_000
+
+        def _encode_list(text: str) -> list[int]:
+            return tok.encode(text, add_special_tokens=False)
+
+        def _count(text: str) -> int:
+            return len(tok.encode(text, add_special_tokens=False))
+
+        return _encode_list, _count
+    except Exception:
+        return None
+
+
+def chunk_geology(
+    markdown: str,
+    source_file: str = "",
+    source_type: str = "",
+    source_url: str | None = None,
+    software_product: str | None = None,
+    language: str = "ru",
+    section_path: str = "",
+    geology_subdomain: str = "",
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> list[Chunk]:
+    """Chunk markdown with geology-aware metadata and subdomain classification.
+
+    Uses LlamaIndex MarkdownNodeParser + SentenceSplitter for two-stage chunking.
+    Applies keyword-based subdomain classification to each chunk.
+    Returns list of Chunk objects with geology metadata populated.
+
+    Args:
+        markdown: Source markdown text.
+        source_file: Original filename.
+        source_type: competitor_manual | standard | paper | video | forum.
+        source_url: URL if available.
+        software_product: Micromine | Surpac | GEOMIX | etc.
+        language: "ru" | "en".
+        section_path: Heading hierarchy prefix.
+        geology_subdomain: Override subdomain (auto-classified if empty/general).
+        chunk_size: Target chunk size in tokens (default from config).
+        chunk_overlap: Overlap between consecutive chunks (default from config).
+    """
+    from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
+    from llama_index.core.schema import Document
+
+    from rag_core.geology_classifier import classify_subdomain
+
+    cfg = get_settings()
+    if chunk_size is None:
+        chunk_size = cfg.indexing.chunk_size
+    if chunk_overlap is None:
+        chunk_overlap = cfg.indexing.chunk_overlap
+
+    if not markdown.strip():
+        return []
+
+    # Pre-processing
+    text = _fix_unclosed_code_blocks(markdown)
+    text = _filter_empty_sections(text)
+
+    # Set up tokenizer
+    tok_result = _load_tokenizer()
+    if tok_result is not None:
+        tok_list_fn, tok_count_fn = tok_result
+    else:
+        tok_list_fn = lambda t: t.split()  # noqa: E731
+        tok_count_fn = lambda t: len(t.split())  # noqa: E731
+
+    # Stage 1: Structure-aware split by headings
+    md_parser = MarkdownNodeParser()
+    doc = Document(text=text)
+    nodes = md_parser.get_nodes_from_documents([doc])
+
+    # Stage 2: Sentence split for oversized nodes
+    sentence_splitter = SentenceSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        tokenizer=tok_list_fn,
+    )
+
+    final_chunks: list[tuple[str, str | None]] = []  # (text, header_path)
+
+    for node in nodes:
+        node_text = node.get_content()
+        if not node_text.strip():
+            continue
+
+        header_path = node.metadata.get("Header_path")
+        token_count = tok_count_fn(node_text)
+
+        # Atomic units: tables and code blocks are never split
+        if _is_table_block(node_text) or _is_code_block(node_text):
+            final_chunks.append((node_text, header_path))
+            continue
+
+        # Small enough — keep as-is
+        if token_count <= chunk_size:
+            final_chunks.append((node_text, header_path))
+            continue
+
+        # Oversized — run through SentenceSplitter
+        sub_nodes = sentence_splitter.get_nodes_from_documents(
+            [Document(text=node_text)]
+        )
+        for sub in sub_nodes:
+            sub_text = sub.get_content()
+            if sub_text.strip():
+                final_chunks.append((sub_text, header_path))
+
+    # Build Chunk objects with geology metadata
+    chunks: list[Chunk] = []
+
+    for idx, (chunk_text, header_path) in enumerate(final_chunks):
+        # Build full section path
+        parts = []
+        if section_path:
+            parts.append(section_path)
+        elif software_product:
+            parts.append(software_product)
+        if header_path:
+            parts.append(header_path)
+        full_section_path = " > ".join(parts) if parts else ""
+
+        # Prepend section path for retrieval context
+        if full_section_path:
+            context = f"[{full_section_path}]"
+        else:
+            context = ""
+
+        # Determine subdomain
+        subdomain = geology_subdomain
+        if not subdomain or subdomain == "general":
+            subdomain = classify_subdomain(chunk_text)
+
+        chunk_id = hashlib.md5(
+            f"{source_file}::{idx}::{chunk_text[:100]}".encode()
+        ).hexdigest()[:12]
+
+        chunk = Chunk(
+            id=chunk_id,
+            content=chunk_text,
+            context=context,
+            source_file=source_file,
+            source_type=source_type,
+            source_url=source_url,
+            software_product=software_product,
+            geology_subdomain=subdomain,
+            section_path=full_section_path,
+            language=language,
+            has_figures=_has_figures(chunk_text),
+            chunk_index=idx,
+        )
+        chunks.append(chunk)
+
+    return chunks

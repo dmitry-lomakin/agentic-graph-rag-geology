@@ -34,6 +34,9 @@ _MULTI_HOP_PATTERNS = [
     r"\bцепочк\w*\b", r"\bпуть\b", r"\bсравн\w*\b", r"\bчерез\b",
     r"\bchain\b", r"\bpath\b", r"\bcompar\w*\b", r"\bthrough\b",
     r"\bhow .+ affect\b", r"\bкак .+ влия\w*\b",
+    # Geology: software comparison triggers multi-hop
+    r"\b(micromine|surpac|datamine|leapfrog|vulcan)\b.*\b(vs|versus|сравн|отлич)\b",
+    r"\bсравн\w*\b.*\b(micromine|surpac|геомикс|digimine|ггис)\b",
 ]
 
 _GLOBAL_PATTERNS = [
@@ -47,6 +50,16 @@ _TEMPORAL_PATTERNS = [
     r"\bwhen\b", r"\bdate\b", r"\btime\w*\b", r"\bhistor\w*\b",
     r"\bbefore\b", r"\bafter\b", r"\bдо\b", r"\bпосле\b",
     r"\b\d{4}[-/]\d{2}\b",  # date pattern YYYY-MM
+]
+
+# Geology domain: regulatory queries → vector_search with high confidence
+_REGULATORY_PATTERNS = [
+    r"\bгкз\b", r"\bгосударственн\w* экспертиз\w*\b",
+    r"\bзакон о недрах\b", r"\bкондици\w*\b",
+    r"\bклассификаци\w* запасов\b", r"\bформа 5-гр\b",
+    r"\bтэо кондиций\b", r"\bроснедра\b",
+    r"\bгост\b", r"\bприказ мпр\b",
+    r"\bнормативн\w*\b", r"\bметодическ\w*\b",
 ]
 
 # Tool mapping per query type
@@ -76,6 +89,7 @@ def classify_query_by_patterns(query: str) -> RouterDecision:
     """Classify query using regex pattern matching.
 
     Returns RouterDecision with confidence based on match count.
+    Includes geology domain patterns (regulatory, comparison).
     """
     scores: dict[QueryType, int] = {
         QueryType.TEMPORAL: _match_patterns(query, _TEMPORAL_PATTERNS),
@@ -84,10 +98,18 @@ def classify_query_by_patterns(query: str) -> RouterDecision:
         QueryType.GLOBAL: _match_patterns(query, _GLOBAL_PATTERNS),
     }
 
+    # Regulatory patterns → SIMPLE with high confidence (direct lookup)
+    regulatory_count = _match_patterns(query, _REGULATORY_PATTERNS)
+
     best_type = max(scores, key=lambda k: scores[k])
     best_count = scores[best_type]
 
-    if best_count == 0:
+    # Regulatory queries take priority if they score higher
+    if regulatory_count > best_count:
+        query_type = QueryType.SIMPLE
+        confidence = min(0.6 + regulatory_count * 0.15, 0.95)
+        reasoning = f"Matched {regulatory_count} regulatory pattern(s); using vector search."
+    elif best_count == 0:
         query_type = QueryType.SIMPLE
         confidence = 0.5
         reasoning = "No specific patterns matched; defaulting to simple vector search."

@@ -111,6 +111,125 @@ class PipelineService:
             return {"error": str(e)}
 
     # ------------------------------------------------------------------
+    # Geology domain methods
+    # ------------------------------------------------------------------
+
+    def search_geology_docs(
+        self,
+        query: str,
+        language: str = "",
+        software_product: str = "",
+        geology_subdomain: str = "",
+        source_type: str = "",
+    ) -> list:
+        """Search geology knowledge base with metadata filtering.
+
+        Returns results with source attribution.
+        """
+        from rag_core.embedder import embed_query
+        from rag_core.vector_store import VectorStore
+
+        filters = {}
+        if language:
+            filters["language"] = language
+        if software_product:
+            filters["software_product"] = software_product
+        if geology_subdomain:
+            filters["geology_subdomain"] = geology_subdomain
+        if source_type:
+            filters["source_type"] = source_type
+
+        embedding = embed_query(query)
+        store = VectorStore(driver=self._driver)
+        return store.search(embedding, filters=filters or None)
+
+    def get_software_feature(
+        self,
+        feature_name: str,
+        software_product: str = "Micromine",
+    ) -> list:
+        """Find how a specific software implements a feature."""
+        from rag_core.embedder import embed_query
+        from rag_core.vector_store import VectorStore
+
+        embedding = embed_query(f"{software_product} {feature_name}")
+        store = VectorStore(driver=self._driver)
+        return store.search(
+            embedding,
+            filters={"software_product": software_product} if software_product else None,
+        )
+
+    def compare_implementations(
+        self,
+        feature: str,
+        products: list[str] | None = None,
+    ) -> dict[str, list]:
+        """Compare how different GGIS products implement a feature."""
+        from rag_core.embedder import embed_query
+        from rag_core.vector_store import VectorStore
+
+        if products is None:
+            products = ["Micromine", "Surpac", "ГЕОМИКС"]
+
+        embedding = embed_query(feature)
+        store = VectorStore(driver=self._driver)
+
+        results: dict[str, list] = {}
+        for product in products:
+            results[product] = store.search(
+                embedding,
+                top_k=5,
+                filters={"software_product": product},
+            )
+        return results
+
+    def get_standard(self, standard_name: str) -> list:
+        """Find Russian regulatory standards (ГКЗ, ГОСТ, etc.)."""
+        from rag_core.embedder import embed_query
+        from rag_core.vector_store import VectorStore
+
+        embedding = embed_query(standard_name)
+        store = VectorStore(driver=self._driver)
+        return store.search(
+            embedding,
+            filters={"source_type": "standard"},
+        )
+
+    def list_sources(
+        self,
+        source_type: str = "",
+        software_product: str = "",
+    ) -> list[dict]:
+        """List available sources in the knowledge base."""
+        with self._driver.session() as session:
+            where_parts = []
+            params: dict = {}
+            if source_type:
+                where_parts.append("c.source_type = $source_type")
+                params["source_type"] = source_type
+            if software_product:
+                where_parts.append("c.software_product = $software_product")
+                params["software_product"] = software_product
+
+            where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+            result = session.run(
+                f"""
+                MATCH (c:RagChunk)
+                {where_clause}
+                RETURN DISTINCT
+                    c.source_file AS source_file,
+                    c.source_type AS source_type,
+                    c.software_product AS software_product,
+                    c.language AS language,
+                    count(c) AS chunk_count
+                ORDER BY c.software_product, c.source_file
+                """,
+                **params,
+            )
+            return [dict(r) for r in result]
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 

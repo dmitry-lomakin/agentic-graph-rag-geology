@@ -40,10 +40,14 @@ def ingest_file(
     skip_enrichment: bool = False,
     skip_skeleton: bool = False,
     use_gpu: bool = False,
+    geology: bool = False,
+    source_type: str = "",
+    software_product: str = "",
+    language: str = "ru",
 ) -> None:
     """Ingest a single file through the full pipeline."""
     from neo4j import GraphDatabase
-    from rag_core.chunker import chunk_text
+    from rag_core.chunker import chunk_geology, chunk_text
     from rag_core.config import get_settings, make_openai_client
     from rag_core.embedder import embed_chunks
     from rag_core.enricher import enrich_chunks
@@ -65,7 +69,16 @@ def ingest_file(
         return
 
     # 2. Chunk
-    chunks = chunk_text(text)
+    if geology:
+        chunks = chunk_geology(
+            text,
+            source_file=os.path.basename(file_path),
+            source_type=source_type,
+            software_product=software_product or None,
+            language=language,
+        )
+    else:
+        chunks = chunk_text(text)
     logger.info("Created %d chunks", len(chunks))
 
     # 3. Enrich (optional)
@@ -96,7 +109,7 @@ def ingest_file(
                 )
                 sys.exit(1)
             raise
-        stored = store.store_chunks(chunks)
+        stored = store.add_chunks(chunks)
         logger.info("Stored %d chunks in Neo4j vector index", stored)
 
         # 6. Skeleton indexing (optional)
@@ -146,6 +159,10 @@ def main() -> None:
     parser.add_argument("--skip-enrichment", action="store_true", help="Skip LLM enrichment")
     parser.add_argument("--skip-skeleton", action="store_true", help="Skip skeleton indexing")
     parser.add_argument("--use-gpu", action="store_true", help="Enable GPU for Docling")
+    parser.add_argument("--geology", action="store_true", help="Use geology-aware chunker (768 tokens, subdomain classification)")
+    parser.add_argument("--source-type", default="", help="Source type: competitor_manual|standard|paper|video|forum")
+    parser.add_argument("--software-product", default="", help="Software product name (e.g. Micromine, Surpac)")
+    parser.add_argument("--language", default="ru", help="Document language: ru|en")
     args = parser.parse_args()
 
     target = os.path.abspath(args.path)
@@ -173,6 +190,10 @@ def main() -> None:
             skip_enrichment=args.skip_enrichment,
             skip_skeleton=args.skip_skeleton,
             use_gpu=args.use_gpu,
+            geology=args.geology,
+            source_type=args.source_type,
+            software_product=args.software_product,
+            language=args.language,
         )
 
     logger.info("All done. %d file(s) ingested.", len(files))

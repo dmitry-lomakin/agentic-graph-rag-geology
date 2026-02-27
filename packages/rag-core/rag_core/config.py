@@ -18,8 +18,6 @@ class Neo4jSettings(BaseSettings):
 class OpenAISettings(BaseSettings):
     api_key: str = ""
     base_url: str = ""  # LiteLLM proxy: e.g. "http://localhost:4000/v1"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
     llm_model: str = "gpt-4o"
     llm_model_mini: str = "gpt-4o-mini"
     llm_temperature: float = 0.0
@@ -27,9 +25,20 @@ class OpenAISettings(BaseSettings):
     model_config = {"env_prefix": "OPENAI_"}
 
 
+class EmbeddingSettings(BaseSettings):
+    model_name: str = "intfloat/multilingual-e5-large"
+    dimensions: int = 1024
+    prefix_passage: str = "passage: "
+    prefix_query: str = "query: "
+    batch_size: int = 32
+    device: str = ""  # auto-detect if empty
+
+    model_config = {"env_prefix": "EMBEDDING_"}
+
+
 class IndexingSettings(BaseSettings):
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = 768
+    chunk_overlap: int = 100
     skeleton_beta: float = 0.25
     knn_k: int = 10
     pagerank_damping: float = 0.85
@@ -57,6 +66,7 @@ class AgentSettings(BaseSettings):
 class Settings(BaseSettings):
     neo4j: Neo4jSettings = Neo4jSettings()
     openai: OpenAISettings = OpenAISettings()
+    embedding: EmbeddingSettings = EmbeddingSettings()
     indexing: IndexingSettings = IndexingSettings()
     retrieval: RetrievalSettings = RetrievalSettings()
     agent: AgentSettings = AgentSettings()
@@ -70,6 +80,27 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Create and cache settings instance loading from environment."""
     return Settings()
+
+
+_embedding_model = None
+
+
+def make_embedding_model(settings: Settings | None = None):
+    """Create and cache SentenceTransformer embedding model.
+
+    Returns a SentenceTransformer instance loaded with the configured model.
+    Cached globally so the model is loaded only once.
+    """
+    global _embedding_model  # noqa: PLW0603
+    if _embedding_model is not None:
+        return _embedding_model
+
+    from sentence_transformers import SentenceTransformer
+
+    cfg = settings or get_settings()
+    device = cfg.embedding.device or None  # None = auto-detect
+    _embedding_model = SentenceTransformer(cfg.embedding.model_name, device=device)
+    return _embedding_model
 
 
 def make_openai_client(settings: Settings | None = None):

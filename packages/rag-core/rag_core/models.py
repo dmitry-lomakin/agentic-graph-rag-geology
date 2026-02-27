@@ -20,6 +20,19 @@ class Chunk(BaseModel):
     embedding: list[float] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # Geology domain metadata
+    source_file: str = ""
+    source_type: str = ""  # competitor_manual | standard | paper | video | forum
+    source_url: str | None = None
+    software_product: str | None = None  # Micromine | Surpac | GEOMIX | etc.
+    geology_subdomain: str = "general"  # block_modeling | reserve_calc | etc.
+    section_path: str = ""  # "Micromine > Block Modeling > Kriging Parameters"
+    language: str = ""  # "ru" | "en"
+    doc_date: str | None = None
+    page_numbers: str | None = None
+    has_figures: bool = False
+    chunk_index: int = 0
+
     @property
     def enriched_content(self) -> str:
         if self.context:
