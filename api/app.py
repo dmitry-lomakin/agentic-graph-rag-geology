@@ -79,3 +79,7 @@ def create_app(service: PipelineService | None = None) -> FastAPI:
 
     app.include_router(router)
     return app
+
+
+# Module-level instance for uvicorn (e.g. `uvicorn api.app:app`)
+app = create_app()
