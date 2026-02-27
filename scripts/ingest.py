@@ -174,9 +174,10 @@ def main() -> None:
     if os.path.isfile(target):
         files = [target]
     elif os.path.isdir(target):
-        for name in sorted(os.listdir(target)):
-            full = os.path.join(target, name)
-            if os.path.isfile(full) and not name.startswith("."):
+        for root, _dirs, names in os.walk(target):
+            for name in sorted(names):
+                full = os.path.join(root, name)
+                if not name.startswith("."):
                 files.append(full)
 
     if not files:
