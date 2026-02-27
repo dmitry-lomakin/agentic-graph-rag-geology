@@ -48,7 +48,7 @@ def generate_answer(
     if not results:
         logger.warning("No results provided for answer generation")
         return QAResult(
-            answer="I don't have enough context to answer this question.",
+            answer="Недостаточно контекста для ответа на данный вопрос. / Not enough context to answer this question.",
             sources=[],
             confidence=0.0,
             query=query,
@@ -78,10 +78,11 @@ def generate_answer(
         )
     else:
         system_prompt = (
-            "You are a knowledgeable Q&A assistant. Synthesize information from ALL provided "
-            "context chunks to give a comprehensive answer. Combine facts from different chunks "
-            "when needed. If some details are missing, answer with what IS available rather than "
-            "refusing. Cite chunk numbers used."
+            "You are a knowledgeable Q&A assistant specialized in mining geology (ГГИС / ТПИ). "
+            "Synthesize information from ALL provided context chunks to give a comprehensive answer. "
+            "Combine facts from different chunks when needed. If some details are missing, answer "
+            "with what IS available rather than refusing. Cite chunk numbers used. "
+            "IMPORTANT: Always answer in the same language as the query."
         )
 
     user_prompt = f"Query: {query}\n\nContext:\n{context}\n\nPlease provide an answer based on the above context."
