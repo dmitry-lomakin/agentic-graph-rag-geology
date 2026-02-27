@@ -185,19 +185,27 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("Ingesting %d file(s)...", len(files))
-    for f in files:
-        ingest_file(
-            f,
-            skip_enrichment=args.skip_enrichment,
-            skip_skeleton=args.skip_skeleton,
-            use_gpu=args.use_gpu,
-            geology=args.geology,
-            source_type=args.source_type,
-            software_product=args.software_product,
-            language=args.language,
-        )
+    succeeded = 0
+    failed = 0
+    for i, f in enumerate(files, 1):
+        logger.info("[%d/%d] %s", i, len(files), os.path.basename(f))
+        try:
+            ingest_file(
+                f,
+                skip_enrichment=args.skip_enrichment,
+                skip_skeleton=args.skip_skeleton,
+                use_gpu=args.use_gpu,
+                geology=args.geology,
+                source_type=args.source_type,
+                software_product=args.software_product,
+                language=args.language,
+            )
+            succeeded += 1
+        except Exception as exc:
+            logger.error("FAILED %s: %s", os.path.basename(f), exc)
+            failed += 1
 
-    logger.info("All done. %d file(s) ingested.", len(files))
+    logger.info("Done. %d succeeded, %d failed out of %d files.", succeeded, failed, len(files))
 
 
 if __name__ == "__main__":
