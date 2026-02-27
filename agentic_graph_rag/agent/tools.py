@@ -43,6 +43,19 @@ def _graph_context_to_results(ctx: GraphContext, source: str) -> list[SearchResu
     return results
 
 
+def _ragchunk_fallback_search(
+    embedding: list[float],
+    driver: Driver,
+    top_k: int = 10,
+) -> list[SearchResult]:
+    """Fallback: search RagChunk vector index when phrase_node_index is absent."""
+    from rag_core.vector_store import VectorStore
+
+    store = VectorStore(driver=driver)
+    results = store.search(embedding, top_k=top_k)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # 1. Vector search (simple)
 # ---------------------------------------------------------------------------
@@ -56,17 +69,23 @@ def vector_search(
     """Simple vector similarity search on PhraseNodes.
 
     Uses VectorCypher find_entry_points but returns passages directly.
+    Falls back to RagChunk vector store if phrase_node_index doesn't exist.
     """
-    from agentic_graph_rag.retrieval.vector_cypher import search as vc_search
-
     cfg = get_settings()
     if top_k is None:
         top_k = cfg.retrieval.top_k_vector
 
     embedding = _embed_query(query, openai_client)
-    ctx = vc_search(embedding, driver, top_k=top_k, max_hops=1)
 
-    return _graph_context_to_results(ctx, source="vector")
+    try:
+        from agentic_graph_rag.retrieval.vector_cypher import search as vc_search
+        ctx = vc_search(embedding, driver, top_k=top_k, max_hops=1)
+        return _graph_context_to_results(ctx, source="vector")
+    except Exception as exc:
+        if "phrase_node_index" in str(exc):
+            logger.warning("phrase_node_index not found, falling back to RagChunk vector store")
+            return _ragchunk_fallback_search(embedding, driver, top_k)
+        raise
 
 
 # ---------------------------------------------------------------------------
