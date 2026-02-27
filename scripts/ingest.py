@@ -8,17 +8,22 @@ Options:
     --skip-enrichment   Skip LLM contextual enrichment (faster, no OpenAI calls for enrichment)
     --skip-skeleton     Skip skeleton indexing (no entity extraction, just vector store)
     --use-gpu           Enable GPU acceleration for Docling document parsing
+    --force             Re-ingest files even if already processed
 
 Examples:
     python scripts/ingest.py data/sample_graph_rag.txt
     python scripts/ingest.py data/sample_graph_rag.txt --skip-enrichment
     python scripts/ingest.py ~/documents/ --use-gpu
+    python scripts/ingest.py data/gkz --geology --source-type standard --language ru --skip-enrichment --skip-skeleton
 """
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "pymangle"))
@@ -33,6 +38,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ingest")
 
+CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "manifests"
+CHECKPOINT_FILE = CHECKPOINT_DIR / "ingest_checkpoint.json"
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _file_key(file_path: str) -> str:
+    """Create a unique key for a file based on path, size, and mtime."""
+    st = os.stat(file_path)
+    raw = f"{os.path.abspath(file_path)}|{st.st_size}|{int(st.st_mtime)}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _load_checkpoint() -> dict:
+    """Load checkpoint data from disk."""
+    if CHECKPOINT_FILE.exists():
+        try:
+            return json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_checkpoint(data: dict) -> None:
+    """Save checkpoint data to disk."""
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _mark_done(checkpoint: dict, file_path: str, chunks: int) -> None:
+    """Mark a file as successfully ingested."""
+    key = _file_key(file_path)
+    checkpoint[key] = {
+        "path": os.path.abspath(file_path),
+        "name": os.path.basename(file_path),
+        "size": os.path.getsize(file_path),
+        "chunks": chunks,
+    }
+    _save_checkpoint(checkpoint)
+
+
+def _is_done(checkpoint: dict, file_path: str) -> bool:
+    """Check if a file has already been ingested."""
+    return _file_key(file_path) in checkpoint
+
+
+# ---------------------------------------------------------------------------
+# Ingest
+# ---------------------------------------------------------------------------
 
 def ingest_file(
     file_path: str,
@@ -44,8 +103,8 @@ def ingest_file(
     source_type: str = "",
     software_product: str = "",
     language: str = "ru",
-) -> None:
-    """Ingest a single file through the full pipeline."""
+) -> int:
+    """Ingest a single file through the full pipeline. Returns chunk count."""
     from neo4j import GraphDatabase
     from rag_core.chunker import chunk_geology, chunk_text
     from rag_core.config import get_settings, make_openai_client
@@ -66,7 +125,7 @@ def ingest_file(
 
     if not text.strip():
         logger.warning("Document is empty, skipping: %s", file_path)
-        return
+        return 0
 
     # 2. Chunk
     if geology:
@@ -149,6 +208,7 @@ def ingest_file(
         driver.close()
 
     logger.info("Done: %s", file_path)
+    return len(chunks)
 
 
 def main() -> None:
@@ -163,6 +223,7 @@ def main() -> None:
     parser.add_argument("--source-type", default="", help="Source type: competitor_manual|standard|paper|video|forum")
     parser.add_argument("--software-product", default="", help="Software product name (e.g. Micromine, Surpac)")
     parser.add_argument("--language", default="ru", help="Document language: ru|en")
+    parser.add_argument("--force", action="store_true", help="Re-ingest files even if already processed")
     args = parser.parse_args()
 
     target = os.path.abspath(args.path)
@@ -184,13 +245,32 @@ def main() -> None:
         logger.error("No files found at: %s", target)
         sys.exit(1)
 
+    # Filter out already-ingested files
+    checkpoint = _load_checkpoint()
+    if not args.force:
+        todo = []
+        skipped = 0
+        for f in files:
+            if _is_done(checkpoint, f):
+                skipped += 1
+            else:
+                todo.append(f)
+        if skipped:
+            logger.info("Skipping %d already-ingested file(s) (use --force to re-ingest)", skipped)
+        files = todo
+
+    if not files:
+        logger.info("All files already ingested. Nothing to do.")
+        return
+
     logger.info("Ingesting %d file(s)...", len(files))
     succeeded = 0
     failed = 0
+    total_chunks = 0
     for i, f in enumerate(files, 1):
         logger.info("[%d/%d] %s", i, len(files), os.path.basename(f))
         try:
-            ingest_file(
+            n_chunks = ingest_file(
                 f,
                 skip_enrichment=args.skip_enrichment,
                 skip_skeleton=args.skip_skeleton,
@@ -200,12 +280,17 @@ def main() -> None:
                 software_product=args.software_product,
                 language=args.language,
             )
+            _mark_done(checkpoint, f, n_chunks)
             succeeded += 1
+            total_chunks += n_chunks
         except Exception as exc:
             logger.error("FAILED %s: %s", os.path.basename(f), exc)
             failed += 1
 
-    logger.info("Done. %d succeeded, %d failed out of %d files.", succeeded, failed, len(files))
+    logger.info(
+        "Done. %d succeeded (%d chunks), %d failed out of %d files.",
+        succeeded, total_chunks, failed, len(files),
+    )
 
 
 if __name__ == "__main__":
