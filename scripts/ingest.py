@@ -43,9 +43,12 @@ logger = logging.getLogger("ingest")
 CHECKPOINT_DIR = Path(__file__).resolve().parent.parent / "manifests"
 CHECKPOINT_FILE = CHECKPOINT_DIR / "ingest_checkpoint.json"
 
+# Supported file extensions (must match rag_core/loader.py SUPPORTED_EXTENSIONS)
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".html", ".md", ".txt"}
+
 
 # ---------------------------------------------------------------------------
-# Timeout helper (Unix only — on Windows, falls back to no timeout)
+# Timeout helper (cross-platform: SIGALRM on Unix, thread on Windows)
 # ---------------------------------------------------------------------------
 
 class _TimeoutError(Exception):
@@ -53,25 +56,50 @@ class _TimeoutError(Exception):
 
 
 class _file_timeout:
-    """Context manager that raises _TimeoutError after *seconds* on Unix."""
+    """Context manager that raises _TimeoutError after *seconds*.
+
+    Uses SIGALRM on Unix, threading.Timer + ctypes on Windows.
+    """
 
     def __init__(self, seconds: int):
         self.seconds = seconds
-        self._supported = hasattr(signal, "SIGALRM")
+        self._use_signal = hasattr(signal, "SIGALRM")
 
     def __enter__(self):
-        if self._supported and self.seconds > 0:
-            signal.signal(signal.SIGALRM, self._handler)
+        if self.seconds <= 0:
+            return self
+        if self._use_signal:
+            signal.signal(signal.SIGALRM, self._alarm_handler)
             signal.alarm(self.seconds)
+        else:
+            import ctypes
+            import threading
+
+            self._target_tid = threading.current_thread().ident
+            self._timer = threading.Timer(self.seconds, self._thread_handler)
+            self._timer.daemon = True
+            self._timer.start()
         return self
 
     def __exit__(self, *args):
-        if self._supported and self.seconds > 0:
+        if self.seconds <= 0:
+            return
+        if self._use_signal:
             signal.alarm(0)
+        else:
+            self._timer.cancel()
 
     @staticmethod
-    def _handler(signum, frame):
+    def _alarm_handler(signum, frame):
         raise _TimeoutError("File processing timed out")
+
+    def _thread_handler(self):
+        """Raise exception in the main thread (Windows fallback)."""
+        import ctypes
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+            ctypes.c_ulong(self._target_tid),
+            ctypes.py_object(_TimeoutError),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +322,24 @@ def main() -> None:
 
     if not files:
         logger.info("All files already ingested. Nothing to do.")
+        return
+
+    # Filter out unsupported file types early (before expensive imports)
+    supported = []
+    unsupported_count = 0
+    for f in files:
+        ext = os.path.splitext(f)[1].lower()
+        if ext in SUPPORTED_EXTENSIONS:
+            supported.append(f)
+        else:
+            logger.warning("Skipping unsupported format %s: %s", ext, os.path.basename(f))
+            unsupported_count += 1
+    if unsupported_count:
+        logger.info("Skipped %d file(s) with unsupported format (.doc, .rtf, etc.)", unsupported_count)
+    files = supported
+
+    if not files:
+        logger.info("No supported files to ingest.")
         return
 
     logger.info("Ingesting %d file(s) (timeout=%ds per file)...", len(files), args.timeout)
