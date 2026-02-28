@@ -22,6 +22,19 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.utils.logging_config import setup_logging
 
 
+def _parse_proxies(value: str | None) -> list[str] | None:
+    """Parse proxy specification: file path (one per line) or comma-separated URLs."""
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_file():
+        lines = path.read_text().strip().splitlines()
+        proxies = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    else:
+        proxies = [p.strip() for p in value.split(",") if p.strip()]
+    return proxies or None
+
+
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
 def cli(verbose: bool) -> None:
@@ -120,22 +133,24 @@ def confluence(space: str, rate: float, force: bool) -> None:
 @cli.command()
 @click.option("--rate", default=0.5, help="Requests per second (be polite to forum)")
 @click.option("--force", is_flag=True, help="Re-download all threads")
-def geobus(rate: float, force: bool) -> None:
+@click.option("--proxies", default=None, help="Proxy file (one per line) or comma-separated proxy URLs")
+def geobus(rate: float, force: bool, proxies: str | None) -> None:
     """Scrape geobus.ru engineering geology forum threads."""
     from scripts.scrapers.geobus_scraper import GeobusScraper
 
-    scraper = GeobusScraper(rate=rate)
+    scraper = GeobusScraper(rate=rate, proxies=_parse_proxies(proxies))
     asyncio.run(scraper.run(force=force))
 
 
 @cli.command()
 @click.option("--rate", default=0.5, help="Requests per second (be polite to forum)")
 @click.option("--force", is_flag=True, help="Re-download all threads")
-def forumwebru(rate: float, force: bool) -> None:
+@click.option("--proxies", default=None, help="Proxy file (one per line) or comma-separated proxy URLs")
+def forumwebru(rate: float, force: bool, proxies: str | None) -> None:
     """Scrape forum.web.ru MSU geology forum threads."""
     from scripts.scrapers.forumwebru_scraper import ForumWebRuScraper
 
-    scraper = ForumWebRuScraper(rate=rate)
+    scraper = ForumWebRuScraper(rate=rate, proxies=_parse_proxies(proxies))
     asyncio.run(scraper.run(force=force))
 
 

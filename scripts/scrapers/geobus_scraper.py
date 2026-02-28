@@ -72,7 +72,14 @@ def _safe_filename(title: str, max_len: int = 80) -> str:
 class GeobusScraper(BaseScraper):
     """Scrape forum threads from geobus.ru (Invision Community)."""
 
-    def __init__(self, rate: float = 0.5, max_concurrent: int = 2) -> None:
+    _session_timeout = 120
+
+    def __init__(
+        self,
+        rate: float = 0.5,
+        max_concurrent: int = 2,
+        proxies: list[str] | None = None,
+    ) -> None:
         manifest_path = PROJECT_ROOT / "manifests" / "geobus_ru.csv"
         super().__init__(
             manifest_path=manifest_path,
@@ -80,6 +87,7 @@ class GeobusScraper(BaseScraper):
             software_product="",
             rate=rate,
             max_concurrent=max_concurrent,
+            proxies=proxies,
         )
 
     async def _fetch_section_page(
@@ -94,15 +102,15 @@ class GeobusScraper(BaseScraper):
             url += f"?page={page}"
 
         items: list[DiscoveredItem] = []
-        async with self.rate_limiter:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    self.logger.warning(
-                        "Section %s page %d returned status %d",
-                        section.slug, page, resp.status,
-                    )
-                    return items
-                html = await resp.text()
+        resp = await self._fetch(session, url)
+        async with resp:
+            if resp.status != 200:
+                self.logger.warning(
+                    "Section %s page %d returned status %d",
+                    section.slug, page, resp.status,
+                )
+                return items
+            html = await resp.text()
 
         soup = BeautifulSoup(html, "html.parser")
 
@@ -147,11 +155,11 @@ class GeobusScraper(BaseScraper):
     ) -> int:
         """Detect total number of listing pages in a section."""
         url = f"{BASE_URL}/{section.section_id}-{section.slug}/"
-        async with self.rate_limiter:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return 1
-                html = await resp.text()
+        resp = await self._fetch(session, url)
+        async with resp:
+            if resp.status != 200:
+                return 1
+            html = await resp.text()
 
         soup = BeautifulSoup(html, "html.parser")
 
@@ -204,11 +212,11 @@ class GeobusScraper(BaseScraper):
         self, session: aiohttp.ClientSession, url: str
     ) -> tuple[str, int]:
         """Fetch a single thread page, return (html_text, page_count)."""
-        async with self.rate_limiter:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return "", 0
-                html = await resp.text()
+        resp = await self._fetch(session, url)
+        async with resp:
+            if resp.status != 200:
+                return "", 0
+            html = await resp.text()
 
         soup = BeautifulSoup(html, "html.parser")
 
@@ -291,49 +299,3 @@ class GeobusScraper(BaseScraper):
             / filename
         )
 
-    async def run(self, force: bool = False) -> None:
-        """Override run() with longer timeout for forum threads."""
-        timeout = aiohttp.ClientTimeout(total=120)
-        connector = aiohttp.TCPConnector(limit=20, ssl=False)
-        headers = {"User-Agent": "MCP-GeoKnowledge-Bot/1.0"}
-
-        async with aiohttp.ClientSession(
-            timeout=timeout, connector=connector, headers=headers
-        ) as session:
-            self.logger.info("Starting discovery...")
-            items = await self.discover(session)
-            self.logger.info("Discovered %d items", len(items))
-
-            if not force:
-                items = [i for i in items if not self.manifest.has_url(i.url)]
-                self.logger.info(
-                    "%d items remaining after filtering already-downloaded",
-                    len(items),
-                )
-
-            if not items:
-                self.logger.info("Nothing to download.")
-                return
-
-            import asyncio as _asyncio
-
-            tasks = [self._process_item(session, item) for item in items]
-
-            success = 0
-            failed = 0
-            for i, coro in enumerate(_asyncio.as_completed(tasks), 1):
-                result = await coro
-                if result:
-                    success += 1
-                else:
-                    failed += 1
-                if i % 50 == 0 or i == len(tasks):
-                    self.logger.info(
-                        "Progress: %d/%d (success=%d, failed=%d)",
-                        i, len(tasks), success, failed,
-                    )
-
-            self.logger.info(
-                "Done. Downloaded %d, failed %d, total in manifest: %d",
-                success, failed, len(self.manifest),
-            )

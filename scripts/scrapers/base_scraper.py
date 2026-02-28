@@ -16,6 +16,7 @@ from tenacity import (
 )
 
 from scripts.utils.manifest import Manifest, ManifestEntry, compute_sha256, now_iso
+from scripts.utils.proxy_pool import ProxyPool
 from scripts.utils.rate_limiter import RateLimiter
 
 USER_AGENT = "MCP-GeoKnowledge-Bot/1.0"
@@ -43,6 +44,8 @@ class BaseScraper(abc.ABC):
         - local_path(item) → Path where the file should be saved
     """
 
+    _session_timeout: int = 60
+
     def __init__(
         self,
         manifest_path: Path,
@@ -50,13 +53,21 @@ class BaseScraper(abc.ABC):
         software_product: str,
         rate: float = 2.0,
         max_concurrent: int = 5,
+        proxies: list[str] | None = None,
     ) -> None:
         self.manifest = Manifest(manifest_path)
         self.source_type = source_type
         self.software_product = software_product
         self.rate_limiter = RateLimiter(rate=rate)
-        self.semaphore = asyncio.Semaphore(max_concurrent)
         self.logger = logging.getLogger(self.__class__.__name__)
+
+        if proxies:
+            self.proxy_pool: ProxyPool | None = ProxyPool(proxies, rate=rate)
+            max_concurrent = max_concurrent * len(proxies)
+        else:
+            self.proxy_pool = None
+
+        self.semaphore = asyncio.Semaphore(max_concurrent)
 
     @abc.abstractmethod
     async def discover(self, session: aiohttp.ClientSession) -> list[DiscoveredItem]:
@@ -74,6 +85,25 @@ class BaseScraper(abc.ABC):
     def local_path(self, item: DiscoveredItem) -> Path:
         """Return the local file path where this item should be saved."""
         ...
+
+    async def _fetch(
+        self, session: aiohttp.ClientSession, url: str, **kwargs: Any
+    ) -> aiohttp.ClientResponse:
+        """Rate-limited, proxy-aware HTTP GET.
+
+        When a proxy pool is configured, acquires the next proxy and its
+        per-proxy rate limiter.  Otherwise falls back to the scraper-level
+        rate limiter and makes a direct request.
+
+        Returns the *entered* response context — caller is responsible for
+        reading the body (``await resp.text()`` / ``await resp.read()``).
+        """
+        if self.proxy_pool is not None:
+            proxy_url = await self.proxy_pool.acquire()
+            return await session.get(url, proxy=proxy_url, **kwargs)
+
+        await self.rate_limiter.acquire()
+        return await session.get(url, **kwargs)
 
     async def _download_with_retry(
         self, session: aiohttp.ClientSession, item: DiscoveredItem
@@ -130,7 +160,7 @@ class BaseScraper(abc.ABC):
 
     async def run(self, force: bool = False) -> None:
         """Main entry point: discover items, skip already-downloaded, download the rest."""
-        timeout = aiohttp.ClientTimeout(total=60)
+        timeout = aiohttp.ClientTimeout(total=self._session_timeout)
         connector = aiohttp.TCPConnector(limit=20, ssl=False)
         headers = {"User-Agent": USER_AGENT}
 
