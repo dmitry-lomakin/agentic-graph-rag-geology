@@ -17,7 +17,8 @@ from bs4 import BeautifulSoup
 
 from scripts.scrapers.base_scraper import BaseScraper, DiscoveredItem, PROJECT_ROOT
 
-BASE_URL = "https://geobus.ru/forum"
+SITE_URL = "https://geobus.ru"
+BASE_URL = f"{SITE_URL}/forum"
 
 
 @dataclass
@@ -133,7 +134,7 @@ class GeobusScraper(BaseScraper):
 
             topic_id = match.group(1)
             topic_slug = match.group(2)
-            topic_url = f"{BASE_URL}/topic/{topic_id}-{topic_slug}/"
+            topic_url = f"{SITE_URL}/topic/{topic_id}-{topic_slug}/"
 
             if topic_url in seen_urls:
                 continue
