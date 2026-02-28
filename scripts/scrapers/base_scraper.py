@@ -135,6 +135,10 @@ class BaseScraper(abc.ABC):
                 self.logger.error("Failed to download %s: %s", item.url, e)
                 return False
 
+            if not data:
+                self.logger.warning("Empty content for %s (status %d), skipping", item.url, status)
+                return False
+
             dest = self.local_path(item)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)

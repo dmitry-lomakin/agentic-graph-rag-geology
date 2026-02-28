@@ -275,11 +275,7 @@ class ForumWebRuScraper(BaseScraper):
         self, session: aiohttp.ClientSession, url: str
     ) -> tuple[str, int]:
         """Fetch a single thread page, return (posts_html, max_start_offset)."""
-        try:
-            resp = await self._fetch(session, url)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            self.logger.warning("Timeout/error fetching thread %s: %s", url, e)
-            return "", 0
+        resp = await self._fetch(session, url)
         async with resp:
             if resp.status != 200:
                 return "", 0
