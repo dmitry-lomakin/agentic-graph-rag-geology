@@ -97,5 +97,25 @@ def geokniga(rate: float, force: bool) -> None:
     asyncio.run(scraper.run(force=force))
 
 
+@cli.command()
+@click.option(
+    "--space",
+    default="2MA1",
+    type=click.Choice(["2MA1", "2MAD"]),
+    help="Confluence space key (2MA1=Russian, 2MAD=English)",
+)
+@click.option("--rate", default=2.0, help="Requests per second")
+@click.option("--force", is_flag=True, help="Re-download all pages")
+def confluence(space: str, rate: float, force: bool) -> None:
+    """Scrape Micromine Alastri docs from Atlassian Confluence wiki.
+
+    Space 2MA1 contains ~424 Russian pages, 2MAD contains ~444 English pages.
+    """
+    from scripts.scrapers.confluence_scraper import ConfluenceScraper
+
+    scraper = ConfluenceScraper(space_key=space, rate=rate)
+    asyncio.run(scraper.run(force=force))
+
+
 if __name__ == "__main__":
     cli()
