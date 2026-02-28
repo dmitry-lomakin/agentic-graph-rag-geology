@@ -7,6 +7,7 @@ Usage:
     python scripts/scrapers/run_scrapers.py geobus [--rate 0.5] [--force]
 """
 
+import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,7 +105,11 @@ class GeobusScraper(BaseScraper):
             url += f"?page={page}"
 
         items: list[DiscoveredItem] = []
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching section %s page %d: %s", section.slug, page, e)
+            return items
         async with resp:
             if resp.status != 200:
                 self.logger.warning(
@@ -157,7 +162,11 @@ class GeobusScraper(BaseScraper):
     ) -> int:
         """Detect total number of listing pages in a section."""
         url = f"{BASE_URL}/{section.section_id}-{section.slug}/"
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching page count for %s: %s", section.slug, e)
+            return 1
         async with resp:
             if resp.status != 200:
                 return 1
@@ -214,7 +223,11 @@ class GeobusScraper(BaseScraper):
         self, session: aiohttp.ClientSession, url: str
     ) -> tuple[str, int]:
         """Fetch a single thread page, return (html_text, page_count)."""
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching thread %s: %s", url, e)
+            return "", 0
         async with resp:
             if resp.status != 200:
                 return "", 0

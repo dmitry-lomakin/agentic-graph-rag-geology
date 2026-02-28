@@ -7,6 +7,7 @@ Usage:
     python scripts/scrapers/run_scrapers.py forumwebru [--rate 0.5] [--force]
 """
 
+import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,7 +144,11 @@ class ForumWebRuScraper(BaseScraper):
     ) -> int:
         """Detect total number of topics in a forum section from pagination."""
         url = f"{VIEWFORUM_URL}?f={section.forum_id}"
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching topic count for f=%d: %s", section.forum_id, e)
+            return 0
         async with resp:
             if resp.status != 200:
                 return 0
@@ -179,7 +184,11 @@ class ForumWebRuScraper(BaseScraper):
         url = f"{VIEWFORUM_URL}?f={section.forum_id}&start={start}"
         items: list[DiscoveredItem] = []
 
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching forum f=%d start=%d: %s", section.forum_id, start, e)
+            return items
         async with resp:
             if resp.status != 200:
                 self.logger.warning(
@@ -266,7 +275,11 @@ class ForumWebRuScraper(BaseScraper):
         self, session: aiohttp.ClientSession, url: str
     ) -> tuple[str, int]:
         """Fetch a single thread page, return (posts_html, max_start_offset)."""
-        resp = await self._fetch(session, url)
+        try:
+            resp = await self._fetch(session, url)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.logger.warning("Timeout/error fetching thread %s: %s", url, e)
+            return "", 0
         async with resp:
             if resp.status != 200:
                 return "", 0
