@@ -22,6 +22,23 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from scripts.utils.logging_config import setup_logging
 
 
+def _normalize_proxy(raw: str) -> str:
+    """Convert a proxy string to a URL.
+
+    Accepts:
+        - Full URLs: ``http://user:pass@host:port``
+        - Compact format: ``ip:port:username:password`` → ``http://username:password@ip:port``
+        - Host:port only: ``ip:port`` → ``http://ip:port``
+    """
+    if raw.startswith(("http://", "https://", "socks5://", "socks4://")):
+        return raw
+    parts = raw.split(":")
+    if len(parts) == 4:
+        ip, port, user, password = parts
+        return f"http://{user}:{password}@{ip}:{port}"
+    return f"http://{raw}"
+
+
 def _parse_proxies(value: str | None) -> list[str] | None:
     """Parse proxy specification: file path (one per line) or comma-separated URLs."""
     if not value:
@@ -29,9 +46,10 @@ def _parse_proxies(value: str | None) -> list[str] | None:
     path = Path(value)
     if path.is_file():
         lines = path.read_text().strip().splitlines()
-        proxies = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+        raw = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
     else:
-        proxies = [p.strip() for p in value.split(",") if p.strip()]
+        raw = [p.strip() for p in value.split(",") if p.strip()]
+    proxies = [_normalize_proxy(r) for r in raw]
     return proxies or None
 
 
