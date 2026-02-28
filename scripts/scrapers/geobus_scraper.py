@@ -31,16 +31,18 @@ class ForumSection:
 
 # Key sections on geobus.ru relevant to geology domain
 SECTIONS: list[ForumSection] = [
-    ForumSection(2, "laboratornye-raboty", "Лабораторные работы", "laboratory"),
-    ForumSection(3, "burovye-raboty", "Буровые работы", "drilling"),
-    ForumSection(4, "geomekhanika", "Геомеханика", "geomechanics"),
-    ForumSection(5, "gidrogeologiya", "Гидрогеология", "hydrogeology"),
-    ForumSection(6, "normativnye-dokumenty", "Нормативные документы", "regulatory"),
-    ForumSection(7, "inzhenernaya-geologiya", "Инженерная геология", "general"),
-    ForumSection(8, "obshchie-voprosy", "Общие вопросы", "general"),
-    ForumSection(9, "programmnoe-obespechenie", "Программное обеспечение", "geological_software"),
-    ForumSection(10, "izyskaniya", "Изыскания", "general"),
-    ForumSection(11, "geofizika", "Геофизика", "geophysics"),
+    ForumSection(22, "laboratornye-raboty", "Лабораторные работы", "laboratory"),
+    ForumSection(23, "polevye-ispytaniya-gruntov", "Полевые испытания грунтов", "laboratory"),
+    ForumSection(24, "burenie-inzhenerno-geologicheskih-skvazhin", "Бурение инженерно-геологических скважин", "drilling"),
+    ForumSection(25, "kameralnye-raboty", "Камеральные работы", "general"),
+    ForumSection(40, "geomehanika", "Геомеханика", "geomechanics"),
+    ForumSection(52, "gidrogeologiya", "Гидрогеология", "hydrogeology"),
+    ForumSection(30, "geofizicheskie-issledovaniya", "Геофизические исследования", "geophysics"),
+    ForumSection(32, "gosty-snipy-normativnye-dokumenty", "ГОСТЫ, СНиПы, нормативные документы", "regulatory"),
+    ForumSection(21, "inzhenernaya-geologiya-obschie-voprosy", "Инженерная геология - общие вопросы", "general"),
+    ForumSection(39, "obschie-voprosy-po-kompleksam-izyskaniy", "Общие вопросы по комплексам изысканий", "general"),
+    ForumSection(45, "literatura", "Литература", "general"),
+    ForumSection(37, "ekspertiza-soglasovanie-inzhenerno-geologicheskih-izyskaniy", "Экспертиза, согласование", "regulatory"),
 ]
 
 # Subdomain fallback classification from thread title keywords
