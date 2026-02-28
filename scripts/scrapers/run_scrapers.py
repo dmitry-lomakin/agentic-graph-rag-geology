@@ -117,5 +117,27 @@ def confluence(space: str, rate: float, force: bool) -> None:
     asyncio.run(scraper.run(force=force))
 
 
+@cli.command()
+@click.option("--rate", default=0.5, help="Requests per second (be polite to forum)")
+@click.option("--force", is_flag=True, help="Re-download all threads")
+def geobus(rate: float, force: bool) -> None:
+    """Scrape geobus.ru engineering geology forum threads."""
+    from scripts.scrapers.geobus_scraper import GeobusScraper
+
+    scraper = GeobusScraper(rate=rate)
+    asyncio.run(scraper.run(force=force))
+
+
+@cli.command()
+@click.option("--rate", default=0.5, help="Requests per second (be polite to forum)")
+@click.option("--force", is_flag=True, help="Re-download all threads")
+def forumwebru(rate: float, force: bool) -> None:
+    """Scrape forum.web.ru MSU geology forum threads."""
+    from scripts.scrapers.forumwebru_scraper import ForumWebRuScraper
+
+    scraper = ForumWebRuScraper(rate=rate)
+    asyncio.run(scraper.run(force=force))
+
+
 if __name__ == "__main__":
     cli()
