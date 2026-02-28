@@ -24,11 +24,8 @@ def setup_logging(
     """
     global _configured
 
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-
     if _configured:
-        return logger
+        return logging.getLogger(name)
     _configured = True
 
     fmt = logging.Formatter(
@@ -36,16 +33,20 @@ def setup_logging(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Configure root logger so all loggers (including per-class ones) get output
+    root = logging.getLogger()
+    root.setLevel(level)
+
     stderr_handler = logging.StreamHandler(sys.stderr)
     stderr_handler.setLevel(level)
     stderr_handler.setFormatter(fmt)
-    logger.addHandler(stderr_handler)
+    root.addHandler(stderr_handler)
 
     if log_dir is not None:
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_dir / f"{name}.log", encoding="utf-8")
         file_handler.setLevel(level)
         file_handler.setFormatter(fmt)
-        logger.addHandler(file_handler)
+        root.addHandler(file_handler)
 
-    return logger
+    return logging.getLogger(name)
